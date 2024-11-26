@@ -39,19 +39,25 @@ void BasePathGeneratorNode::basePathCallback(const nav_msgs::msg::Path::SharedPt
   mutex_.unlock();
   
   bool is_collision_free = true;
-  for (int i = 0; i < msg->poses.size(); i++) {
-    uint16_t mx, my;
-    double wx = msg->poses[i].pose.position.x;
-    double wy = msg->poses[i].pose.position.y;
-    mx = static_cast<unsigned int>((wx - origin_x) / resolution);
-    my = static_cast<unsigned int>((wy - origin_y) / resolution);
-    if(mx >= size_x || my >= size_y) {
+  for (int i = 0; i < msg->poses.size() - 1; i++) {
+    uint16_t smx, smy, emx, emy;
+    smx = static_cast<unsigned int>((msg->poses[i].pose.position.x - origin_x) / resolution);
+    smy = static_cast<unsigned int>((msg->poses[i].pose.position.y - origin_y) / resolution);
+    emx = static_cast<unsigned int>((msg->poses[i + 1].pose.position.x - origin_x) / resolution);
+    emy = static_cast<unsigned int>((msg->poses[i + 1].pose.position.y - origin_y) / resolution);
+    if(emx >= size_x || emy >= size_y) {
       is_collision_free = false;
       RCLCPP_INFO(get_logger(), "Path is out of boundary");
       break;
     }
-    if (data[mx + my * size_x] == 100) {
-      is_collision_free = false;
+    std::vector<std::pair<int, int>> cells = bresenhamLine(smx, smy, emx, emy);
+    for (unsigned int j = 0; j < cells.size(); j++) {
+      if (data[cells[j].first + cells[j].second * size_x] == 100) {
+        is_collision_free = false;
+        break;
+      }
+    }
+    if (!is_collision_free) {
       break;
     }
   }
@@ -74,6 +80,10 @@ void BasePathGeneratorNode::basePathCallback(const nav_msgs::msg::Path::SharedPt
     send_goal_options.feedback_callback = std::bind(&BasePathGeneratorNode::feedbackCallback, this, std::placeholders::_1, std::placeholders::_2);
     send_goal_options.result_callback = std::bind(&BasePathGeneratorNode::resultCallback, this, std::placeholders::_1);
     cptp_client_->async_send_goal(goal, send_goal_options);
+  } else {
+    nav_msgs::msg::Path safe_path;
+    safe_path.header = msg->header;
+    safe_trajectory_pub_->publish(safe_path);
   }
 
   // base_path_sub_.reset();
@@ -134,6 +144,34 @@ void BasePathGeneratorNode::generatorTimerCallback() {
   }
   path_pub_->publish(base_path);
 }
+
+std::vector<std::pair<int, int>> BasePathGeneratorNode::bresenhamLine(int x0, int y0, int x1, int y1) {
+  std::vector<std::pair<int, int>> cells;
+
+  int dx = abs(x1 - x0);
+  int dy = abs(y1 - y0);
+  int sx = (x0 < x1) ? 1 : -1;
+  int sy = (y0 < y1) ? 1 : -1;
+  int err = dx - dy;
+
+  while (true) {
+    cells.emplace_back(x0, y0);
+
+    if (x0 == x1 && y0 == y1) break;
+
+    int e2 = 2 * err;
+    if (e2 > -dy) {
+      err -= dy;
+      x0 += sx;
+    }
+    if (e2 < dx) {
+      err += dx;
+        y0 += sy  ;
+    }
+  }
+  return cells;
+}
+
 
 
 int main(int argc, char ** argv)

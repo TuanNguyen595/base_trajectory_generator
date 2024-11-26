@@ -28,6 +28,7 @@ public:
     void goalResponseCallback(GoalHandle::SharedPtr goal);
     void feedbackCallback(GoalHandle::SharedPtr, const std::shared_ptr<const ComputePathToPose::Feedback> feedback);
     void resultCallback(const GoalHandle::WrappedResult & result);
+    std::vector<std::pair<int, int>> bresenhamLine(int x0, int y0, int x1, int y1) ;
 private:
     rclcpp_action::Client<ComputePathToPose>::SharedPtr cptp_client_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
