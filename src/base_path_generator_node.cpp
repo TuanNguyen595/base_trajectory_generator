@@ -7,8 +7,6 @@ BasePathGeneratorNode::BasePathGeneratorNode(const rclcpp::NodeOptions & options
   map_sub_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>("obstacle_gridmap",
    rclcpp::SystemDefaultsQoS(),
    std::bind(&BasePathGeneratorNode::mapCallback, this, std::placeholders::_1));
-  generator_timer_ = this->create_wall_timer(std::chrono::milliseconds(1000),
-   std::bind(&BasePathGeneratorNode::generatorTimerCallback, this));
   path_pub_ = this->create_publisher<nav_msgs::msg::Path>("base_trajectory", rclcpp::SystemDefaultsQoS());
   base_path_sub_ = this->create_subscription<nav_msgs::msg::Path>("base_trajectory", rclcpp::SystemDefaultsQoS(),
    std::bind(&BasePathGeneratorNode::basePathCallback, this, std::placeholders::_1));
@@ -17,9 +15,12 @@ BasePathGeneratorNode::BasePathGeneratorNode(const rclcpp::NodeOptions & options
   number_waypoints_ = this->declare_parameter("number_waypoints", 10);
   waypoint_dist_ = this->declare_parameter("waypoint_dist", 1.0);
   planner_id_ = this->declare_parameter("planner_id", "SmacHybrid");
+  generation_timer_interval_ = this->declare_parameter("generation_timer_interval", 2000.0);
   cptp_client_ = rclcpp_action::create_client<ComputePathToPose>(this, "compute_path_to_pose");
   safe_trajectory_pub_ = this->create_publisher<nav_msgs::msg::Path>("safe_trajectory", rclcpp::SystemDefaultsQoS());
   stop_pub_ = this->create_publisher<std_msgs::msg::Bool>("stop", rclcpp::SystemDefaultsQoS());
+  generator_timer_ = this->create_wall_timer(std::chrono::milliseconds(generation_timer_interval_),
+   std::bind(&BasePathGeneratorNode::generatorTimerCallback, this));
 }
 
 void BasePathGeneratorNode::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
@@ -64,14 +65,16 @@ void BasePathGeneratorNode::basePathCallback(const nav_msgs::msg::Path::SharedPt
   base_trajectory_collision_pub_->publish(msg_collision_free);
 
   //Send goal
-  auto goal = ComputePathToPose::Goal();
-  goal.goal = msg->poses.back();
-  goal.planner_id = planner_id_;
-  auto send_goal_options = rclcpp_action::Client<ComputePathToPose>::SendGoalOptions();
-  send_goal_options.goal_response_callback = std::bind(&BasePathGeneratorNode::goalResponseCallback, this, std::placeholders::_1);
-  send_goal_options.feedback_callback = std::bind(&BasePathGeneratorNode::feedbackCallback, this, std::placeholders::_1, std::placeholders::_2);
-  send_goal_options.result_callback = std::bind(&BasePathGeneratorNode::resultCallback, this, std::placeholders::_1);
-  cptp_client_->async_send_goal(goal, send_goal_options);
+  if(!is_collision_free) {
+    auto goal = ComputePathToPose::Goal();
+    goal.goal = msg->poses.back();
+    goal.planner_id = planner_id_;
+    auto send_goal_options = rclcpp_action::Client<ComputePathToPose>::SendGoalOptions();
+    send_goal_options.goal_response_callback = std::bind(&BasePathGeneratorNode::goalResponseCallback, this, std::placeholders::_1);
+    send_goal_options.feedback_callback = std::bind(&BasePathGeneratorNode::feedbackCallback, this, std::placeholders::_1, std::placeholders::_2);
+    send_goal_options.result_callback = std::bind(&BasePathGeneratorNode::resultCallback, this, std::placeholders::_1);
+    cptp_client_->async_send_goal(goal, send_goal_options);
+  }
 
   // base_path_sub_.reset();
 }

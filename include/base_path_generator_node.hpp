@@ -45,5 +45,6 @@ private:
     uint16_t number_waypoints_;
     double waypoint_dist_;
     std::string planner_id_;
+    uint16_t generation_timer_interval_;
 
 };
