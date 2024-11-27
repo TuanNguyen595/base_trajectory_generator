@@ -30,7 +30,17 @@ target_include_directories(base_path_generator_node PUBLIC
 target_compile_features(base_path_generator_node PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
 ament_target_dependencies(base_path_generator_node ${dependencies})
 
+add_executable(path_checker_node src/path_checker_node.cpp)
+target_include_directories(path_checker_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_compile_features(path_checker_node PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
+ament_target_dependencies(path_checker_node ${dependencies})
+
 install(TARGETS base_path_generator_node
+  DESTINATION lib/${PROJECT_NAME})
+
+  install(TARGETS path_checker_node
   DESTINATION lib/${PROJECT_NAME})
 
 ament_package()
