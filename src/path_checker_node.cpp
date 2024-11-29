@@ -135,6 +135,10 @@ void PathCheckerNode::basePathCallback(const nav_msgs::msg::Path::SharedPtr msg)
     if (found_legal) {
       RCLCPP_INFO(get_logger(), "Found legal point");
       getPlanFromPotential(best_pose, safe_path);
+    } else {
+      std_msgs::msg::Bool msg_stop;
+      msg_stop.data = true;
+      stop_pub_->publish(msg_stop);
     }
   }
   safe_path.header = msg->header;
