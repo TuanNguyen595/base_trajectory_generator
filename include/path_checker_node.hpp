@@ -9,6 +9,7 @@
 #include "nav_msgs/msg/occupancy_grid.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "std_msgs/msg/bool.hpp"
+#include "third_party/navfn.hpp"
 
 #include <random>
 
@@ -24,12 +25,13 @@ public:
     void mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg);
     void basePathCallback(const nav_msgs::msg::Path::SharedPtr msg);
 
-    void goalResponseCallback(GoalHandle::SharedPtr goal);
-    void feedbackCallback(GoalHandle::SharedPtr, const std::shared_ptr<const ComputePathToPose::Feedback> feedback);
-    void resultCallback(const GoalHandle::WrappedResult & result);
     std::vector<std::pair<int, int>> bresenhamLine(int x0, int y0, int x1, int y1) ;
 private:
-    rclcpp_action::Client<ComputePathToPose>::SharedPtr cptp_client_;
+    std::vector<uint8_t> dilation(const std::vector<uint8_t>& data, int size_x, int size_y);
+    bool worldToMap(double wx, double wy, unsigned int & mx, unsigned int & my);
+    void mapToWorld(unsigned int mx, unsigned int my, double & wx, double & wy);
+    bool getPlanFromPotential(const geometry_msgs::msg::Pose & goal, nav_msgs::msg::Path & plan);
+    double getPointPotential(const geometry_msgs::msg::Point & world_point);
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr base_trajectory_collision_pub_;
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr base_path_sub_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr safe_trajectory_pub_;
@@ -38,5 +40,6 @@ private:
     nav_msgs::msg::OccupancyGrid grid_map_;
     std::string planner_id_;
     std::mutex mutex_;
-
+    std::unique_ptr<NavFn> planner_;
+    std::vector<uint8_t> map_data_;
 };

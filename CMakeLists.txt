@@ -30,7 +30,10 @@ target_include_directories(base_path_generator_node PUBLIC
 target_compile_features(base_path_generator_node PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
 ament_target_dependencies(base_path_generator_node ${dependencies})
 
-add_executable(path_checker_node src/path_checker_node.cpp)
+add_executable(path_checker_node 
+src/path_checker_node.cpp
+src/third_party/navfn.cpp
+)
 target_include_directories(path_checker_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
