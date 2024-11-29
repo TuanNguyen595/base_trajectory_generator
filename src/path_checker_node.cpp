@@ -10,9 +10,12 @@ PathCheckerNode::PathCheckerNode(const rclcpp::NodeOptions & options)
   base_trajectory_collision_pub_ = this->create_publisher<std_msgs::msg::Bool>("base_trajectory_collision",
    rclcpp::SystemDefaultsQoS());
   planner_id_ = this->declare_parameter("planner_id", "SmacHybrid");
+  robot_radius_ = this->declare_parameter("robot_radius", 0.3);
   safe_trajectory_pub_ = this->create_publisher<nav_msgs::msg::Path>("safe_trajectory", rclcpp::SystemDefaultsQoS());
   stop_pub_ = this->create_publisher<std_msgs::msg::Bool>("stop", rclcpp::SystemDefaultsQoS());
   planner_ = std::make_unique<NavFn>(0,0);
+  inflate_map_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("inflate_map", rclcpp::SystemDefaultsQoS());
+  collision_point_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("collision_point", rclcpp::SystemDefaultsQoS());
 }
 
 void PathCheckerNode::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
@@ -32,8 +35,19 @@ void PathCheckerNode::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr 
       map_data_[i] = 0;
     }
   }
-  map_data_ = dilation(map_data_, grid_map_.info.width, grid_map_.info.height);
+  map_data_ = dilation(map_data_, grid_map_.info.width, grid_map_.info.height, (int)(robot_radius_/grid_map_.info.resolution + 0.5));
   planner_->setCostmap(map_data_.data(), true, true);
+  nav_msgs::msg::OccupancyGrid inflate_map;
+  inflate_map.info = grid_map_.info;
+  inflate_map.header = grid_map_.header;
+  for(int i = 0; i < map_data_.size(); i++) {
+    if(map_data_[i] == COST_OBS) {
+      inflate_map.data.push_back(100);
+    } else {
+      inflate_map.data.push_back(0);
+    }
+  }
+  inflate_map_pub_->publish(inflate_map);
 }
 
 void PathCheckerNode::basePathCallback(const nav_msgs::msg::Path::SharedPtr msg) {
@@ -65,8 +79,29 @@ void PathCheckerNode::basePathCallback(const nav_msgs::msg::Path::SharedPtr msg)
     }
     std::vector<std::pair<int, int>> cells = bresenhamLine(smx, smy, emx, emy);
     for (unsigned int j = 0; j < cells.size(); j++) {
-      if (data[cells[j].first + cells[j].second * size_x] == 100) {
+      if (map_data_[cells[j].first + cells[j].second * size_x] == COST_OBS) {
         is_collision_free = false;
+        //Publish collision point
+        visualization_msgs::msg::Marker collision_point;
+        collision_point.header = grid_map_.header;
+        collision_point.id = 1;
+        collision_point.type = visualization_msgs::msg::Marker::SPHERE;
+        collision_point.action = visualization_msgs::msg::Marker::ADD;
+        collision_point.pose.position.x = cells[j].first * resolution + origin_x;
+        collision_point.pose.position.y = cells[j].second * resolution + origin_y;
+        collision_point.pose.position.z = 0.0;
+        collision_point.pose.orientation.x = 0.0;
+        collision_point.pose.orientation.y = 0.0;
+        collision_point.pose.orientation.z = 0.0;
+        collision_point.pose.orientation.w = 1.0;
+        collision_point.scale.x = 0.3;
+        collision_point.scale.y = 0.3;
+        collision_point.scale.z = 0.3;
+        collision_point.color.r = 1.0;
+        collision_point.color.g = 0.0;
+        collision_point.color.b = 0.0;
+        collision_point.color.a = 1.0;
+        collision_point_pub_->publish(collision_point);
         break;
       }
     }
@@ -135,6 +170,7 @@ void PathCheckerNode::basePathCallback(const nav_msgs::msg::Path::SharedPtr msg)
     if (found_legal) {
       RCLCPP_INFO(get_logger(), "Found legal point");
       getPlanFromPotential(best_pose, safe_path);
+      smoothApproachToGoal(goal, safe_path);
     } else {
       std_msgs::msg::Bool msg_stop;
       msg_stop.data = true;
@@ -171,7 +207,7 @@ bool PathCheckerNode::getPlanFromPotential(const geometry_msgs::msg::Pose & goal
   planner_->setStart(map_goal);
 
   const int & max_cycles = (grid_map_.info.width >= grid_map_.info.height) ?
-    (grid_map_.info.width * 4) : (grid_map_.info.height * 4);
+    (grid_map_.info.width * 10) : (grid_map_.info.height * 10);
 
   int path_len = planner_->calcPath(max_cycles);
   if (path_len == 0) {
@@ -234,9 +270,9 @@ std::vector<std::pair<int, int>> PathCheckerNode::bresenhamLine(int x0, int y0, 
   return cells;
 }
 
-std::vector<uint8_t> PathCheckerNode::dilation(const std::vector<uint8_t>& data, int size_x, int size_y) {
-  int kRows = 3;
-  int kCols = 3;
+std::vector<uint8_t> PathCheckerNode::dilation(const std::vector<uint8_t>& data, int size_x, int size_y, int extend) {
+  int kRows = extend * 2 + 1;
+  int kCols = kRows;
   int kCenterX = kRows / 2;
   int kCenterY = kCols / 2;
 
@@ -245,28 +281,27 @@ std::vector<uint8_t> PathCheckerNode::dilation(const std::vector<uint8_t>& data,
 
 for (int y = 0; y < size_y; ++y) {
   for (int x = 0; x < size_x; ++x) {
-      uint8_t maxVal = 0;
-
       // Apply the kernel
-      for (int ky = 0; ky < kRows; ++ky) {
-        for (int kx = 0; kx < kCols; ++kx) {
-          int neighborY = y + (ky - kCenterY); // Neighbor row index
-          int neighborX = x + (kx - kCenterX); // Neighbor column index
+      int outputIndex = y * size_x + x; // Convert 2D index to 1D index
+      if(data[outputIndex] == COST_OBS) {
+        for (int ky = 0; ky < kRows; ++ky) {
+          for (int kx = 0; kx < kCols; ++kx) {
+            int neighborY = y + (ky - kCenterY); // Neighbor row index
+            int neighborX = x + (kx - kCenterX); // Neighbor column index
 
-          // Check if the neighboring pixel is within bounds
-          if (neighborY >= 0 && neighborY < size_y && neighborX >= 0 && neighborX < size_x) {
-            int index = neighborY * size_x + neighborX; // Convert 2D index to 1D index
-            maxVal = std::max(data[index], maxVal);
+            // Check if the neighboring pixel is within bounds
+            if (neighborY >= 0 && neighborY < size_y && neighborX >= 0 && neighborX < size_x) {
+              int index = neighborY * size_x + neighborX; // Convert 2D index to 1D index
+              output[index] = COST_OBS;
+            }
           }
         }
       }
 
-      int outputIndex = y * size_x + x; // Convert 2D index to 1D index
-      if(data[outputIndex] == 0 && maxVal == COST_OBS) {
-        output[outputIndex] = maxVal - 2;  // Set the dilated pixel value
-      } else {
-        output[outputIndex] = maxVal;
-      }
+      // if(data[outputIndex] == 0 && maxVal == COST_OBS) {
+      //   output[outputIndex] = maxVal - 2;  // Set the dilated pixel value
+      // } else {
+      // }
     }
   }
 

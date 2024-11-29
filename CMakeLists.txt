@@ -15,6 +15,7 @@ find_package(nav_msgs REQUIRED)
 find_package(nav2_msgs REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 
 set (dependencies 
   rclcpp
@@ -22,6 +23,7 @@ set (dependencies
   nav2_msgs
   rclcpp_action
   std_msgs
+  visualization_msgs
   )
 add_executable(base_path_generator_node src/base_path_generator_node.cpp)
 target_include_directories(base_path_generator_node PUBLIC
