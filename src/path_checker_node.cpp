@@ -37,7 +37,12 @@ void PathCheckerNode::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr 
 }
 
 void PathCheckerNode::basePathCallback(const nav_msgs::msg::Path::SharedPtr msg) {
+  if(grid_map_.data.empty()) {
+    RCLCPP_INFO(get_logger(), "Map is empty");
+    return;
+  }  
   mutex_.lock();
+
   double resolution = grid_map_.info.resolution;
   double origin_x = grid_map_.info.origin.position.x;
   double origin_y = grid_map_.info.origin.position.y;
@@ -85,14 +90,14 @@ void PathCheckerNode::basePathCallback(const nav_msgs::msg::Path::SharedPtr msg)
     int map_start[2];
     int map_goal[2];
     map_start[0] = static_cast<unsigned int>((msg->poses.front().pose.position.x - origin_x) / resolution);
-    map_start[1] = static_cast<unsigned int>((msg->poses.back().pose.position.y - origin_y) / resolution);
+    map_start[1] = static_cast<unsigned int>((msg->poses.front().pose.position.y - origin_y) / resolution);
     map_goal[0] = static_cast<unsigned int>((msg->poses.back().pose.position.x - origin_x) / resolution);
     map_goal[1] = static_cast<unsigned int>((msg->poses.back().pose.position.y - origin_y) / resolution);
-    planner_->setStart(map_start);
-    planner_->setGoal(map_goal);
+    planner_->setStart(map_goal);
+    planner_->setGoal(map_start);
     planner_->calcNavFnAstar();
     double resolution = grid_map_.info.resolution;
-    double tolerance = resolution;
+    double tolerance = resolution * 2;
     geometry_msgs::msg::Pose p, best_pose;
     geometry_msgs::msg::Pose goal = msg->poses.back().pose;
 
@@ -101,10 +106,12 @@ void PathCheckerNode::basePathCallback(const nav_msgs::msg::Path::SharedPtr msg)
     p = goal;
     double potential = planner_->potarr[map_goal[1] * planner_->nx + map_goal[0]];
     if (potential < POT_HIGH) {
+      RCLCPP_INFO(get_logger(), "Goal is reachable by itself %f", potential);
       // Goal is reachable by itself
       best_pose = p;
       found_legal = true;
     } else {
+      RCLCPP_INFO(get_logger(), "Goal is not reachable, finding nearest reachable point with potential %f", potential);
       // Goal is not reachable. Trying to find nearest to the goal
       // reachable point within its tolerance region
       double best_sdist = std::numeric_limits<double>::max();
@@ -114,7 +121,7 @@ void PathCheckerNode::basePathCallback(const nav_msgs::msg::Path::SharedPtr msg)
         p.position.x = goal.position.x - tolerance;
         while (p.position.x <= goal.position.x + tolerance) {
           potential = getPointPotential(p.position);
-          double sdist = std::hypot(p.position.x - goal.position.x, p.position.y - goal.position.y);
+          double sdist = squared_distance(p, goal);
           if (potential < POT_HIGH && sdist < best_sdist) {
             best_sdist = sdist;
             best_pose = p;
@@ -126,13 +133,12 @@ void PathCheckerNode::basePathCallback(const nav_msgs::msg::Path::SharedPtr msg)
       }
     }
     if (found_legal) {
+      RCLCPP_INFO(get_logger(), "Found legal point");
       getPlanFromPotential(best_pose, safe_path);
     }
-  } else {
-    safe_path.header = msg->header;
-    safe_trajectory_pub_->publish(safe_path);
   }
-
+  safe_path.header = msg->header;
+  safe_trajectory_pub_->publish(safe_path);
   // base_path_sub_.reset();
 }
 
@@ -169,7 +175,7 @@ bool PathCheckerNode::getPlanFromPotential(const geometry_msgs::msg::Pose & goal
   }
 
   auto cost = planner_->getLastPathCost();
-  RCLCPP_DEBUG(
+  RCLCPP_INFO(
     get_logger(),
     "Path found, %d steps, %f cost\n", path_len, cost);
 
@@ -234,27 +240,31 @@ std::vector<uint8_t> PathCheckerNode::dilation(const std::vector<uint8_t>& data,
   std::vector<uint8_t> output(data.size(), 0);
 
 for (int y = 0; y < size_y; ++y) {
-        for (int x = 0; x < size_x; ++x) {
-            uint8_t maxVal = 0;
+  for (int x = 0; x < size_x; ++x) {
+      uint8_t maxVal = 0;
 
-            // Apply the kernel
-            for (int ky = 0; ky < kRows; ++ky) {
-                for (int kx = 0; kx < kCols; ++kx) {
-                    int neighborY = y + (ky - kCenterY); // Neighbor row index
-                    int neighborX = x + (kx - kCenterX); // Neighbor column index
+      // Apply the kernel
+      for (int ky = 0; ky < kRows; ++ky) {
+        for (int kx = 0; kx < kCols; ++kx) {
+          int neighborY = y + (ky - kCenterY); // Neighbor row index
+          int neighborX = x + (kx - kCenterX); // Neighbor column index
 
-                    // Check if the neighboring pixel is within bounds
-                    if (neighborY >= 0 && neighborY < size_y && neighborX >= 0 && neighborX < size_x) {
-                        int index = neighborY * size_x + neighborX; // Convert 2D index to 1D index
-                        maxVal = std::max(maxVal, data[index]);
-                    }
-                }
-            }
-
-            int outputIndex = y * size_x + x; // Convert 2D index to 1D index
-            output[outputIndex] = maxVal;  // Set the dilated pixel value
+          // Check if the neighboring pixel is within bounds
+          if (neighborY >= 0 && neighborY < size_y && neighborX >= 0 && neighborX < size_x) {
+            int index = neighborY * size_x + neighborX; // Convert 2D index to 1D index
+            maxVal = std::max(data[index], maxVal);
+          }
         }
+      }
+
+      int outputIndex = y * size_x + x; // Convert 2D index to 1D index
+      if(data[outputIndex] == 0 && maxVal == COST_OBS) {
+        output[outputIndex] = maxVal - 2;  // Set the dilated pixel value
+      } else {
+        output[outputIndex] = maxVal;
+      }
     }
+  }
 
   return output;
 }
@@ -283,6 +293,25 @@ double PathCheckerNode::getPointPotential(const geometry_msgs::msg::Point & worl
   worldToMap(wx, wy, mx, my);
   unsigned int index = my * planner_->nx + mx;
   return planner_->potarr[index];
+}
+
+void PathCheckerNode::smoothApproachToGoal(const geometry_msgs::msg::Pose & goal, nav_msgs::msg::Path & plan) {
+  // Replace the last pose of the computed path if it's actually further away
+  // to the second to last pose than the goal pose.
+  if (plan.poses.size() >= 2) {
+    auto second_to_last_pose = plan.poses.end()[-2];
+    auto last_pose = plan.poses.back();
+    if (
+      squared_distance(last_pose.pose, second_to_last_pose.pose) >
+      squared_distance(goal, second_to_last_pose.pose))
+    {
+      plan.poses.back().pose = goal;
+      return;
+    }
+  }
+  geometry_msgs::msg::PoseStamped goal_copy;
+  goal_copy.pose = goal;
+  plan.poses.push_back(goal_copy);
 }
 
 int main(int argc, char ** argv)

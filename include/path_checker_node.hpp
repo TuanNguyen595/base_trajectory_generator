@@ -32,6 +32,15 @@ private:
     void mapToWorld(unsigned int mx, unsigned int my, double & wx, double & wy);
     bool getPlanFromPotential(const geometry_msgs::msg::Pose & goal, nav_msgs::msg::Path & plan);
     double getPointPotential(const geometry_msgs::msg::Point & world_point);
+    void smoothApproachToGoal(const geometry_msgs::msg::Pose & goal, nav_msgs::msg::Path & plan);
+    inline double squared_distance(
+    const geometry_msgs::msg::Pose & p1,
+    const geometry_msgs::msg::Pose & p2)
+    {
+        double dx = p1.position.x - p2.position.x;
+        double dy = p1.position.y - p2.position.y;
+        return dx * dx + dy * dy;
+    }
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr base_trajectory_collision_pub_;
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr base_path_sub_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr safe_trajectory_pub_;
